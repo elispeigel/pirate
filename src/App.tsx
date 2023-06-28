@@ -18,7 +18,7 @@ function App() {
 
   const handleClick = async () => {
     try {
-      const result: Uint8Array = await invoke("read_torrent_file", {path: filePath});
+      const result: Uint8Array = await invoke("start");
       console.log("🚀 ~ file: App.tsx:17 ~ handleClick ~ result:", result)
       setFileContents(result);
     } catch (error) {
