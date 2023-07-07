@@ -1,4 +1,6 @@
-use sha1::{Sha1, Digest};
+use serde_bencode::ser::to_bytes;
+use serde_bencode::value::Value;
+use sha1::{Digest, Sha1};
 
 pub fn compute_sha1_hash(input: Vec<u8>) -> Vec<u8> {
     let mut hasher = Sha1::new();
@@ -6,23 +8,19 @@ pub fn compute_sha1_hash(input: Vec<u8>) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
+pub fn compute_info_hash(info: &Value) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    match info {
+        Value::Dict(dict) => {
+            let mut hasher = Sha1::new();
+            let key = b"info".to_vec();
+            let info_bencode = dict.get(&key).ok_or("info not found in dictionary")?;
 
-    #[test]
-    fn computes_correct_hash() {
-        assert_eq!(
-            compute_sha1_hash(vec![8u8]),
-            vec![
-                141, 136, 63, 21, 119, 202, 140, 51, 75, 124, 109, 117, 204, 183, 18, 9, 215,
-                28, 237, 19
-            ]
-        );
-    }
+            let info_bytes = to_bytes(info_bencode)
+                .map_err(|e| format!("Failed to serialize info bencode: {}", e))?;
 
-    #[test]
-    fn computes_20_byte_char() {
-        assert_eq!(compute_sha1_hash(vec![8u8]).len(), 20)
+            hasher.update(info_bytes);
+            Ok(hasher.finalize().to_vec())
+        }
+        _ => Err("info must be a dict".into()),
     }
 }

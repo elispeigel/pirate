@@ -17,10 +17,11 @@ function App() {
   };
 
   const handleClick = async () => {
+    console.log("handleClick");
     try {
       const result: Uint8Array = await invoke("start");
       console.log("🚀 ~ file: App.tsx:17 ~ handleClick ~ result:", result)
-      setFileContents(result);
+      // setFileContents(result);
     } catch (error) {
       console.error(error);
     }
@@ -32,10 +33,9 @@ function App() {
 
       <div>
         <input type="file" onChange={handleFileChange} />
-        <button onClick={handleClick} disabled={!filePath}>
+        <button onClick={handleClick}>
           Read File
         </button>
-        <pre>{fileContents}</pre>
       </div>
     </div>
   );
