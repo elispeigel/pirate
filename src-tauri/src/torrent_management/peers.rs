@@ -1,17 +1,20 @@
-use crate::parsing::parser;
-use crate::tracker::tracker;
+use crate::{
+    config,
+    parsing::parser::torrent_metadata::TorrentMetadata,
+    tracker::{self, build_tracker_query},
+};
 use serde_bencode::value::Value;
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Peer {
     pub ip: Ipv4Addr,
     pub port: u16,
 }
 
-pub async fn get_peers(metadata: &parser::TorrentMetadata) -> Result<Vec<Peer>, String> {
-    let query = tracker::build_tracker_query(metadata).await?;
+pub async fn get_peers(metadata: &TorrentMetadata) -> Result<Vec<Peer>, String> {
+    let query = build_tracker_query(metadata).await?;
 
     let response_bytes = match tracker::execute_tracker_query(query).await {
         Ok(data) => data,
@@ -38,13 +41,14 @@ pub async fn get_peers(metadata: &parser::TorrentMetadata) -> Result<Vec<Peer>, 
 }
 
 pub fn unmarshal_peers(peers: &Vec<u8>) -> Result<Vec<Peer>, String> {
-    const PEER_SIZE: u16 = 6;
+    let configuration = config::Config::new();
+    let peer_size = configuration.peer_size;
     let mut unmarshalled_peers: Vec<Peer> = Vec::new();
 
-    if peers.len() as u16 % PEER_SIZE != 0 {
+    if peers.len() as u16 % peer_size != 0 {
         return Err("Received malformed peers".to_string());
     }
-    let peer_chunks: Vec<&[u8]> = peers.chunks(PEER_SIZE as usize).collect();
+    let peer_chunks: Vec<&[u8]> = peers.chunks(peer_size as usize).collect();
 
     for chunk in peer_chunks {
         // Split the chunk into IP and port parts

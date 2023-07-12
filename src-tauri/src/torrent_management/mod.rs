@@ -1,4 +1,6 @@
+pub mod file_io;
 pub mod message;
-pub mod peer_connection;
 pub mod peers;
 pub mod torrent;
+pub mod torrent_manager;
+pub mod torrent_status;

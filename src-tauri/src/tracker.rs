@@ -1,11 +1,14 @@
 extern crate url;
 
-use crate::parsing::parser;
+use crate::{config, parsing::parser::torrent_metadata::TorrentMetadata};
 use std::borrow::Cow;
 use tokio::net::UdpSocket;
 use url::form_urlencoded;
 
-pub async fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<String, String> {
+pub async fn build_tracker_query(metadata: &TorrentMetadata) -> Result<String, String> {
+    let configuration = config::Config::new();
+    let bittorent_port = configuration.bittorent_port;
+
     let formatted_url = if metadata.announce.starts_with("s") {
         let mut url: String = metadata.announce.chars().skip(2).collect();
         url.truncate(url.len() - 1);
@@ -15,8 +18,8 @@ pub async fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<S
     };
 
     let encoded_params = form_urlencoded::Serializer::new(String::new())
-        .append_pair("peer_id", "plenty-of-fluid00001")
-        .append_pair("port", "6881")
+        .append_pair("peer_id", &metadata.peer_id)
+        .append_pair("port", &bittorent_port)
         .append_pair("uploaded", "0")
         .append_pair("downloaded", "0")
         .append_pair("compact", "0")
@@ -37,6 +40,8 @@ pub async fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<S
 }
 
 pub async fn execute_tracker_query(query: String) -> Result<Vec<u8>, String> {
+    let configuration = config::Config::new();
+    let tcp_port = configuration.tcp_port;
     let mut buffer = vec![0; 1024];
 
     let mut parsed_url =
@@ -45,7 +50,7 @@ pub async fn execute_tracker_query(query: String) -> Result<Vec<u8>, String> {
     // Checking if port is specified, otherwise setting the default one
     if parsed_url.port().is_none() {
         parsed_url
-            .set_port(Some(80))
+            .set_port(Some(tcp_port))
             .map_err(|_| "Failed to set port".to_string())?;
     }
 

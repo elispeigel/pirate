@@ -1,32 +1,6 @@
-use serde::Deserialize;
 use serde_bencode::de;
-use std::path::PathBuf;
 
-#[derive(PartialEq, Debug, Clone, Deserialize)]
-pub struct PieceStatus {
-    pub downloaded: bool,
-}
-
-#[derive(PartialEq, Debug, Clone, Deserialize)]
-pub struct TorrentMetadata {
-    pub info: TorrentMetadataInfo,
-    pub info_hash: Vec<u8>,
-    pub announce: String,
-    pub pieces_status: Vec<PieceStatus>,
-    pub file_path: PathBuf,
-}
-
-#[derive(PartialEq, Debug, Clone, Deserialize)]
-pub struct TorrentMetadataInfo {
-    pub pieces: Vec<u8>,
-    pub piece_length: i64,
-    pub length: i64,
-    pub name: String,
-}
-
-pub fn check_all_pieces_downloaded(metadata: &mut TorrentMetadata) -> bool {
-    metadata.pieces_status.iter().all(|piece| piece.downloaded)
-}
+use super::torrent_metadata::TorrentMetadata;
 
 #[derive(Debug)]
 pub enum ParseError {
