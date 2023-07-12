@@ -1,74 +1,25 @@
 extern crate url;
 
-use super::parser;
-use url::form_urlencoded;
+use crate::{config, parsing::parser::torrent_metadata::TorrentMetadata};
 use std::borrow::Cow;
-use bencode::{Bencode};
-use curl::easy::Easy;
-use std::net::Ipv4Addr;
-use std::convert::TryInto;
+use tokio::net::UdpSocket;
+use url::form_urlencoded;
 
-#[derive(Debug)]
-pub struct Peer { // Peer should probably be in its own file as trackers and peers are different
-    pub ip: Ipv4Addr, // url crate may give us another type here
-    pub port: u16,
-}
+pub async fn build_tracker_query(metadata: &TorrentMetadata) -> Result<String, String> {
+    let configuration = config::Config::new();
+    let bittorent_port = configuration.bittorent_port;
 
-pub fn get_peers(metadata: &parser::TorrentMetadata) -> Result<Vec<Peer>, String> {
-    let query = build_tracker_query(metadata)?;
-
-    let response_bytes = execute_tracker_query(query).unwrap();
-
-    let bencoded_response = bencode::from_vec(response_bytes).unwrap();
-
-    let response_dict = if let Bencode::Dict(dict) = bencoded_response {
-        dict.clone()
-    } else {
-        panic!("Reponse should be a dict!");
-    };
-
-    let peer_list = match response_dict.get(&bencode::util::ByteString::from_str("peers")).unwrap() {
-        Bencode::ByteString(s) => s,
-        _ => panic!("Not a ByteString"),
-    };
-
-    unmarshal_peers(peer_list)
-}
-
-fn unmarshal_peers(peers: &Vec<u8>) -> Result<Vec<Peer>, String> {
-    const PEER_SIZE: u16 = 6;
-    let mut unmarshalled_peers: Vec<Peer> = Vec::new();
-
-    if peers.len() as u16 % PEER_SIZE != 0 {
-        return Err("Received malformed peers".to_string());
-    }
-
-    let peer_chunks: Vec<&[u8]> = peers.chunks(PEER_SIZE as usize).collect();
-
-    for chunk in peer_chunks {
-        let (ip_part, port_part) = chunk.split_at(4);
-        unmarshalled_peers.push(Peer{
-            ip: Ipv4Addr::new(ip_part[0], ip_part[1], ip_part[2], ip_part[3]),
-            port: u16::from_be_bytes(port_part.try_into().unwrap()),
-        });
-    }
-
-    Ok(unmarshalled_peers)
-}
-
-fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<String, String> {
     let formatted_url = if metadata.announce.starts_with("s") {
         let mut url: String = metadata.announce.chars().skip(2).collect();
         url.truncate(url.len() - 1);
         url
-    }
-    else {
+    } else {
         metadata.announce.clone()
     };
 
     let encoded_params = form_urlencoded::Serializer::new(String::new())
-        .append_pair("peer_id", "plenty-of-fluid00001")
-        .append_pair("port", "6881")
+        .append_pair("peer_id", &metadata.peer_id)
+        .append_pair("port", &bittorent_port)
         .append_pair("uploaded", "0")
         .append_pair("downloaded", "0")
         .append_pair("compact", "0")
@@ -80,7 +31,7 @@ fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<String, Str
                 Cow::Owned(metadata.info_hash.clone())
             }
         }))
-    .append_pair("info_hash", "!")
+        .append_pair("info_hash", "!")
         .finish();
 
     let query = [formatted_url.to_owned(), encoded_params].join("?");
@@ -88,50 +39,62 @@ fn build_tracker_query(metadata: &parser::TorrentMetadata) -> Result<String, Str
     Ok(query)
 }
 
-fn execute_tracker_query(query: String) -> Result<Vec<u8>, String> {
-    let mut data = Vec::new();
-    let mut handle = Easy::new();
-    handle.url(&query).unwrap();
-    {
-        let mut transfer = handle.transfer();
-        transfer.write_function(|new_data| {
-            data.extend_from_slice(new_data);
-            Ok(new_data.len())
-        }).unwrap();
-        transfer.perform().unwrap();
+pub async fn execute_tracker_query(query: String) -> Result<Vec<u8>, String> {
+    let configuration = config::Config::new();
+    let tcp_port = configuration.tcp_port;
+    let mut buffer = vec![0; 1024];
+
+    let mut parsed_url =
+        url::Url::parse(&query).map_err(|_| "Could not parse the URL".to_string())?;
+
+    // Checking if port is specified, otherwise setting the default one
+    if parsed_url.port().is_none() {
+        parsed_url
+            .set_port(Some(tcp_port))
+            .map_err(|_| "Failed to set port".to_string())?;
     }
 
-    Ok(data)
-}
+    let socket = UdpSocket::bind("0.0.0.0:0")
+        .await
+        .map_err(|e| format!("Failed to bind the socket: {}", e))?;
 
-#[cfg(test)]
-mod test {
-    use super::*;
+    // Get the host and port as strings
+    let host = parsed_url
+        .host_str()
+        .ok_or("Failed to parse host".to_string())?;
+    let port = parsed_url.port().unwrap();
 
-    #[test]
-    fn correctly_unmarshal_peers()  {
-        let bytes = vec![91, 8, 150, 67, 200, 213, 79, 68, 128, 152, 128, 137];
-        assert_eq!(unmarshal_peers(&bytes).is_ok(), true);
-     }
+    println!("Connecting to address: {}:{},", host, port);
 
-    // this naming is a hint to implement a from_bytes or something for peer
-    #[test]
-    fn unmarshals_bytes_into_peers() {
-        let bytes = vec![91, 8, 150, 67, 200, 213, 79, 68, 128, 152, 128, 137];
-        let peers = vec![Peer{ip: Ipv4Addr::new(91, 8, 150, 67), port: 51413},
-                         Peer{ip: Ipv4Addr::new(79, 68, 128, 152), port: 32905}];
+    // Connect the socket using the host:port format
+    match socket.connect(format!("{}:{}", host, port)).await {
+        Ok(()) => (),
+        Err(e) => {
+            println!("Failed to connect the socket: {}", e);
+            return Err(e.to_string());
+        }
+    };
 
-        let unmarshalled_peers = unmarshal_peers(&bytes).unwrap();
-        assert_eq!(unmarshalled_peers[0].ip, peers[0].ip);
-        assert_eq!(unmarshalled_peers[0].port, peers[0].port);
-        assert_eq!(unmarshalled_peers[1].ip, peers[1].ip);
-        assert_eq!(unmarshalled_peers[1].port, peers[1].port);
-    }
+    let params = parsed_url.query().unwrap_or("");
 
-    #[test]
-    fn unmarshalling_returns_error_when_bytes_are_malformed(){
-        let bytes = vec![91, 8, 150, 67, 200, 213, 79, 68, 128, 152, 128, 137, 123];
-    
-        assert_eq!(unmarshal_peers(&bytes).unwrap_err(), "Received malformed peers");
-    }
+    println!("Sending params: {}", params);
+
+    // Here `params` are converted as bytes and sent through the socket
+    let _bytes_sent = socket
+        .send(params.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    println!("Sent params: {}", _bytes_sent);
+
+    match socket.recv(&mut buffer).await {
+        Ok(_) => (),
+        Err(e) => {
+            println!("Failed to receive the buffer: {}", e);
+            return Err(e.to_string());
+        }
+    };
+
+    println!("wakka flokka");
+    Ok(buffer)
 }
